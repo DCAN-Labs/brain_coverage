@@ -4,20 +4,24 @@ import pandas as pd
 import re
 import fsl.utils.run as fslrun
 import nibabel
+import sys
+import glob
+
+# Create argparser for study input, path to MNI mask, and subject/session list
 
 
-def get_inputs(study_input):
+def get_inputs(study_input, MNI_mask='MNI152_T1_2mm_brain_mask_dil.nii.gz'):
     '''Study input should be overarching project folder, which contains derivative and template subfolders'''
     # Setting up paths needed for pipeline 
     if study_input[-1] != '/':
         study_input = str(study_input + '/')
     study_dir = study_input # /spaces/ngdr/ref-data/abcd/nda-3165-2020-09/
-    BIDS = str(study_dir + 'derivatives/abcd-hcp-pipeline/')
-    templates = str(study_dir + 'templates/')
-    MNI_mask = str(templates + 'MNI152_T1_2mm_brain_mask.nii.gz')
+    BIDS = os.path.join(study_dir, 'derivatives/abcd-hcp-pipeline/')
+    #templates = os.path.join([template_dir, 'templates/'])
+    #MNI_mask = os.path.join(templates + 'MNI152_T1_2mm_brain_mask.nii.gz')
     
     # Variables for naming files created by pipeline
-    task_names = ["MID", "nback", "SST"]
+    task_names = ["task-MID", "task-nback", "task-SST", "task-rest"]
 
     # Call calulation function
     run_calculation(BIDS, MNI_mask, task_names)
@@ -30,15 +34,21 @@ def run_calculation(BIDS, MNI_mask, task_names):
     # Loop through subjects 
     for subject in os.listdir(BIDS):
         # Loop through a subjects sessions 
-        for session in os.listdir(subject):
-            ses = str("_" + session + "_")
-            # Loop through tasks 
+        for session in os.listdir(os.path.join(BIDS, subject)):
+            # Loop through all files with .nii.gz extension in the func folder
+            tasks = glob.glob(os.path.join(BIDS, subject, session, 'func', '*.nii.gz'))
+            for task in tasks:
+                parent_dir = os.path.dirname(task)
+                task_bn = os.path.basename(task).replace('.nii.gz','')
+                prefiltered_func = os.path.join(parent_dir, task_bn + '_prefiltered_func.nii.gz')
+
             for t in task_names:
                 # Set up varibles for naming files 
                 fmri_task = str("task-" + t)
-                fmri_task_run = str("task-" + t + "run-")
+                fmri_task_run = str("task-" + t + "_run-")
                 sub_run_task = str(subject + ses + fmri_task)
                 sub_run_basename = str(subject + ses + fmri_task_run)
+                name = '_'.join([subject, session, task])
                 sub_func_path = str(BIDS + subject + '/' + ses + '/func/')
         
                 # Find files with run-XX in them and find the highest run number to determine # of runs 
@@ -84,6 +94,9 @@ def run_calculation(BIDS, MNI_mask, task_names):
                         print('No run ', r, ' found for', sub_run_task)
 
     df.to_csv(BIDS + '_brain_coverage.tsv', sep='\t', encoding='utf-8', header = None, index=False)
+
+if __name__ == '__main__':
+    get_inputs(sys.argv[1])
 
               
 

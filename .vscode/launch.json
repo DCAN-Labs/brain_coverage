@@ -1,0 +1,38 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+
+        {
+            "name": "Python: Current File",
+            "type": "python",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "Python: Outlier Identifier",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/mahalanobis_outlier_identifier.py",
+            "console": "integratedTerminal",
+            "args": ["-out", "/home/feczk001/mccol199/outlier_testing", "-infiles", "PATH/TO/INPUTS"],
+            "justMyCode": true,
+            "env": {"PYDEVD_WARN_SLOW_RESOLVE_TIMEOUT": "100", "PYDEVD_WARN_EVALUATION_TIMEOUT": "100"}, 
+        },
+        {
+            "name": "Python: Brain Coverage",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/brain_coverage.py",
+            "console": "integratedTerminal",
+            "args": ["-study_dir=/home/feczk001/mccol199/bc_abcc_testing/", "-mni_template=/home/faird/shared/code/internal/pipelines/DCAN-HCP/global/templates/MNI152_T1_2mm_brain_mask_dil.nii.gz"],
+            "justMyCode": true,
+            "preLaunchTask": "Load fsl",
+            "env": {"PYDEVD_WARN_SLOW_RESOLVE_TIMEOUT": "100", "PYDEVD_WARN_EVALUATION_TIMEOUT": "100"}, 
+        }
+    ]
+}

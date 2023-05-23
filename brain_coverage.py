@@ -3,28 +3,49 @@ import os
 import pandas as pd
 import re
 import fsl.utils.run as fslrun
-import nibabel
 import sys
 import glob
+import argparse
+from nipype.interfaces import fsl
+from nipype.interfaces.fsl.maths import MathsCommand
+from nibabel import imagestats
 
 # Create argparser for study input, path to MNI mask, and subject/session list
+def _cli():
+    """
+    :return: Dictionary with all validated command-line arguments from the user
+    """
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        '-study_dir', required=True,  
+        help=('Path to BIDS derivatives directory')
+    )
+    parser.add_argument(
+        '-mni_template', required=True, 
+        help='Path to MNI template file'
+    )
+    parser.add_argument(
+        '-subject_list',
+        help=('List of subjects and sessions that you want to process (if you dont want to just run the whole folder)')
+    )
+    return vars(parser.parse_args())
 
-
-def get_inputs(study_input, MNI_mask='MNI152_T1_2mm_brain_mask_dil.nii.gz'):
+def get_inputs():
     '''Study input should be overarching project folder, which contains derivative and template subfolders'''
+    cli_args = _cli()
+    study_input = cli_args["study_dir"]
+    MNI_mask = cli_args["mni_template"]
+
     # Setting up paths needed for pipeline 
     if study_input[-1] != '/':
         study_input = str(study_input + '/')
     study_dir = study_input # /spaces/ngdr/ref-data/abcd/nda-3165-2020-09/
-    BIDS = os.path.join(study_dir, 'derivatives/abcd-hcp-pipeline/')
-    #templates = os.path.join([template_dir, 'templates/'])
-    #MNI_mask = os.path.join(templates + 'MNI152_T1_2mm_brain_mask.nii.gz')
-    
-    # Variables for naming files created by pipeline
+
+    # List of possible task names 
     task_names = ["task-MID", "task-nback", "task-SST", "task-rest"]
 
     # Call calulation function
-    run_calculation(BIDS, MNI_mask, task_names)
+    run_calculation(study_dir, MNI_mask, task_names)
 
 def run_calculation(BIDS, MNI_mask, task_names): 
     # Create empty dataframe that will be filled 
@@ -41,62 +62,36 @@ def run_calculation(BIDS, MNI_mask, task_names):
                 parent_dir = os.path.dirname(task)
                 task_bn = os.path.basename(task).replace('.nii.gz','')
                 prefiltered_func = os.path.join(parent_dir, task_bn + '_prefiltered_func.nii.gz')
+                mean_func = os.path.join(parent_dir + task_bn + '_space-MNI_bold_mean_func.nii.gz')
+                mean_func_mask = os.path.join(parent_dir + task_bn + '_mean_func_mask.nii.gz')
+                mean_func_mask_masked = os.path.join(parent_dir + task_bn + '_mean_func_mask_masked.nii.gz')
 
-            for t in task_names:
-                # Set up varibles for naming files 
-                fmri_task = str("task-" + t)
-                fmri_task_run = str("task-" + t + "_run-")
-                sub_run_task = str(subject + ses + fmri_task)
-                sub_run_basename = str(subject + ses + fmri_task_run)
-                name = '_'.join([subject, session, task])
-                sub_func_path = str(BIDS + subject + '/' + ses + '/func/')
-        
-                # Find files with run-XX in them and find the highest run number to determine # of runs 
-                func_files = os.listdir(sub_func_path)
-                runs = []
-                for fname in func_files:
-                    finding = re.findall("run-(\d+)", fname)
-                    if finding != []:
-                        runs.append(int(finding[0]))
-                runs = sorted(runs)
-                max_run = runs[-1]
+                # FSL calls to perform necessary calculations 
+                out = MathsCommand(in_file= task, out_file= prefiltered_func, output_datatype= 'float', output_type= "NIFTI")
+                fsl.MeanImage(in_file= prefiltered_func, dimension= 'T', out_file= mean_func)
+                fsl.UnaryMaths(in_file= mean_func, operation=bin, out_file= mean_func_mask)
+                fsl.ApplyMask(in_file = mean_func_mask, mask_file= MNI_mask, out_file= mean_func_mask_masked)
 
-                # Perform calulations for each run
-                for r in max_run:
-                    r = str(r)
-                    volume_run = str(sub_func_path + sub_run_basename + r + "_space-MNI_bold.nii.gz")
-                    if os.path.exists(volume_run):
-                        # Gathering paths to files needed for coverage calculations 
-                        bold_vol = str(sub_func_path + sub_run_basename + r + '_space-MNI_bold.nii.gz')
-                        prefiltered_func = str(sub_func_path + sub_run_basename + r + '_space-MNI_bold_prefiltered_func.nii.gz')
-                        mean_func = str(sub_func_path + sub_run_basename + r + '_space-MNI_bold_mean_func.nii.gz')    
-                        mean_func_mask = str(sub_func_path + sub_run_basename + r + '_mean_func_mask.nii.gz')
-                        mean_func_mask_masked = str(sub_func_path + sub_run_basename + r + '_mean_func_mask_masked.nii.gz')
+                # fslrun.FSL_PREFIX="/panfs/roc/msisoft/fsl/6.0.2/bin"
+                # fslrun.runfsl(['fslmaths', task, prefiltered_func, '-odt', 'float'])
+                # fslrun.runfsl(['fslmaths', prefiltered_func, '-Tmean', mean_func])
+                # fslrun.runfsl(['fslmaths', mean_func, '-bin', mean_func_mask])
+                # fslrun.runfsl(['fslmaths', mean_func_mask, '-mas', MNI_mask, mean_func_mask_masked])
+                num_vox = imagestats.count_nonzero_voxels(mean_func_mask_masked)
+                num_temp_vox = imagestats.count_nonzero_voxels(MNI_mask)
 
-                        # FSL calls to perform necessary calculations 
-                        fslrun.runfsl(['fslmaths', bold_vol, prefiltered_func, '-odt', 'float'])
-                        fslrun.runfsl(['fslmaths', prefiltered_func, '-Tmean', mean_func])
-                        fslrun.runfsl(['fslmaths', mean_func, '-bin', mean_func_mask])
-                        fslrun.runfsl(['fslmaths', mean_func_mask, '-mas', MNI_mask, mean_func_mask_masked])
-                        num_vox = nibabel.imagestats.count_nonzero_voxels(mean_func_mask_masked)
-                        num_temp_vox = nibabel.imagestats.count_nonzero_voxels(MNI_mask)
+                num_vox_val = float(num_vox)
+                temp_vox_val = float(num_temp_vox)
+                perc_vox_cov = (num_vox_val/temp_vox_val)*100
+                round_perc_vox = round(perc_vox_cov, 3)
 
-                        num_vox_val = float(num_vox)
-                        temp_vox_val = float(num_temp_vox)
-                        perc_vox_cov = (num_vox_val/temp_vox_val)*100
-                        round_perc_vox = round(perc_vox_cov, 3)
+                # Add data from each run to dataframe and then output after all subjects
+                # subset_data = str("derivatives.func.runs.task-" + t + "_volume")
+                # data = {'participant_id': subject, "session_id": session, "data_subset": subset_data, "task": str("task-" + t), "run": str("run-" + r), "path": volume_run, 'rounded brain coverage %': round_perc_vox}
+                # df = df.append(data, ignore_index=True)            
 
-                        # Add data from each run to dataframe and then output after all subjects
-                        subset_data = str("derivatives.func.runs.task-" + t + "_volume")
-                        data = {'participant_id': subject, "session_id": session, "data_subset": subset_data, "task": str("task-" + t), "run": str("run-" + r), "path": volume_run, 'rounded brain coverage %': round_perc_vox}
-                        df = df.append(data, ignore_index=True)            
-                    else:
-                        print('No run ', r, ' found for', sub_run_task)
 
     df.to_csv(BIDS + '_brain_coverage.tsv', sep='\t', encoding='utf-8', header = None, index=False)
 
 if __name__ == '__main__':
-    get_inputs(sys.argv[1])
-
-              
-
+    get_inputs()

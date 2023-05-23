@@ -6,7 +6,7 @@
         {
             "label": "Load fsl",
             "type": "shell",
-            "command": "module load fsl"
+            "command": "module load fsl; printenv | grep FSL > ${workspaceFolder}/.env",
         }
     ]
 }

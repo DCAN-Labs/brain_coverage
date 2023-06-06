@@ -2,10 +2,10 @@
 import os
 import pandas as pd
 import re
-import fsl.utils.run as fslrun
 import sys
 import glob
 import argparse
+import nibabel as nib
 from nipype.interfaces import fsl
 from nipype.interfaces.fsl.maths import MathsCommand
 from nibabel import imagestats
@@ -21,7 +21,7 @@ def _cli():
         help=('Path to BIDS derivatives directory')
     )
     parser.add_argument(
-        '-mni_template', required=True, 
+        '-mni_template', required=True,
         help='Path to MNI template file'
     )
     parser.add_argument(
@@ -36,62 +36,78 @@ def get_inputs():
     study_input = cli_args["study_dir"]
     MNI_mask = cli_args["mni_template"]
 
-    # Setting up paths needed for pipeline 
+    # Setting up paths needed for pipeline
     if study_input[-1] != '/':
         study_input = str(study_input + '/')
     study_dir = study_input # /spaces/ngdr/ref-data/abcd/nda-3165-2020-09/
 
-    # List of possible task names 
+    # List of possible task names
     task_names = ["task-MID", "task-nback", "task-SST", "task-rest"]
 
     # Call calulation function
     run_calculation(study_dir, MNI_mask, task_names)
 
-def run_calculation(BIDS, MNI_mask, task_names): 
-    # Create empty dataframe that will be filled 
+def run_calculation(BIDS, MNI_mask, task_names):
+    # Create empty dataframe that will be filled
     df_columns = ["participant_id", "session_id", "data_subset", "task", "run", "path", "rounded brain coverage %"]
     df = pd.DataFrame(columns=df_columns)
 
-    # Loop through subjects 
+    # Loop through subjects
     for subject in os.listdir(BIDS):
-        # Loop through a subjects sessions 
+        # Loop through a subjects sessions
         for session in os.listdir(os.path.join(BIDS, subject)):
             # Loop through all files with .nii.gz extension in the func folder
             tasks = glob.glob(os.path.join(BIDS, subject, session, 'func', '*.nii.gz'))
             for task in tasks:
+                # Setting up paths for images that will be created
                 parent_dir = os.path.dirname(task)
                 task_bn = os.path.basename(task).replace('.nii.gz','')
                 prefiltered_func = os.path.join(parent_dir, task_bn + '_prefiltered_func.nii.gz')
-                mean_func = os.path.join(parent_dir + task_bn + '_space-MNI_bold_mean_func.nii.gz')
-                mean_func_mask = os.path.join(parent_dir + task_bn + '_mean_func_mask.nii.gz')
-                mean_func_mask_masked = os.path.join(parent_dir + task_bn + '_mean_func_mask_masked.nii.gz')
+                mean_func = os.path.join(parent_dir, task_bn + '_bold_mean_func.nii.gz')
+                mean_func_mask = os.path.join(parent_dir, task_bn + '_mean_func_mask.nii.gz')
+                mean_func_mask_masked = os.path.join(parent_dir, task_bn + '_mean_func_mask_masked.nii.gz')
 
-                # FSL calls to perform necessary calculations 
-                out = MathsCommand(in_file= task, out_file= prefiltered_func, output_datatype= 'float', output_type= "NIFTI")
-                fsl.MeanImage(in_file= prefiltered_func, dimension= 'T', out_file= mean_func)
-                fsl.UnaryMaths(in_file= mean_func, operation=bin, out_file= mean_func_mask)
-                fsl.ApplyMask(in_file = mean_func_mask, mask_file= MNI_mask, out_file= mean_func_mask_masked)
+                print("starting calculations")
+                # FSL calls to perform necessary calculations
+                # Changes image to float type
+                floating = MathsCommand(in_file= task, out_file= prefiltered_func, output_datatype= 'float', output_type= "NIFTI_GZ")
+                floating.run()
+                # Takes mean of T dimension
+                mean = fsl.MeanImage(in_file= prefiltered_func, dimension= 'T', out_file= mean_func, output_type= "NIFTI_GZ")
+                mean.run()
+                #
+                bined = fsl.UnaryMaths(in_file= mean_func, operation='bin', out_file= mean_func_mask, output_type= "NIFTI_GZ")
+                bined.run()
+                # Apply MNI mask to binned image
+                mask = fsl.ApplyMask(in_file = mean_func_mask, mask_file= MNI_mask, out_file= mean_func_mask_masked, output_type= "NIFTI_GZ")
+                mask.run()
 
-                # fslrun.FSL_PREFIX="/panfs/roc/msisoft/fsl/6.0.2/bin"
-                # fslrun.runfsl(['fslmaths', task, prefiltered_func, '-odt', 'float'])
-                # fslrun.runfsl(['fslmaths', prefiltered_func, '-Tmean', mean_func])
-                # fslrun.runfsl(['fslmaths', mean_func, '-bin', mean_func_mask])
-                # fslrun.runfsl(['fslmaths', mean_func_mask, '-mas', MNI_mask, mean_func_mask_masked])
-                num_vox = imagestats.count_nonzero_voxels(mean_func_mask_masked)
-                num_temp_vox = imagestats.count_nonzero_voxels(MNI_mask)
+                # Loads final masked image and MNI mask and counts their voxels
+                masked_img = nib.load(mean_func_mask_masked)
+                num_vox = imagestats.count_nonzero_voxels(masked_img)
+                mask_img = nib.load(MNI_mask)
+                num_mask_vox = imagestats.count_nonzero_voxels(mask_img)
 
+                # Calculates brain coverage percent
                 num_vox_val = float(num_vox)
-                temp_vox_val = float(num_temp_vox)
-                perc_vox_cov = (num_vox_val/temp_vox_val)*100
+                mask_vox_val = float(num_mask_vox)
+                perc_vox_cov = (num_vox_val/mask_vox_val)*100
                 round_perc_vox = round(perc_vox_cov, 3)
 
                 # Add data from each run to dataframe and then output after all subjects
-                # subset_data = str("derivatives.func.runs.task-" + t + "_volume")
-                # data = {'participant_id': subject, "session_id": session, "data_subset": subset_data, "task": str("task-" + t), "run": str("run-" + r), "path": volume_run, 'rounded brain coverage %': round_perc_vox}
-                # df = df.append(data, ignore_index=True)            
-
+                sections = task_bn.split("_")
+                for s in sections:
+                    if "task" in s:
+                        t = s
+                    elif "run" in s:
+                        r = s
+                subset_data = str("derivatives.func.runs." + t + "_volume")
+                data = {'participant_id': subject, "session_id": session, "data_subset": subset_data, "task": t, "run": r, "path": task, 'rounded brain coverage %': round_perc_vox}
+                # data = {'participant_id': subject, "session_id": session, 'rounded brain coverage %': round_perc_vox}
+                df = df.append(data, ignore_index=True)            
 
     df.to_csv(BIDS + '_brain_coverage.tsv', sep='\t', encoding='utf-8', header = None, index=False)
 
 if __name__ == '__main__':
     get_inputs()
+    

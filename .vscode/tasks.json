@@ -6,7 +6,8 @@
         {
             "label": "Load fsl",
             "type": "shell",
-            "command": "module load fsl; printenv | grep FSL > ${workspaceFolder}/.env",
+            "command": "./prerun.sh",
+            "runOptions": {"runOn": "folderOpen"},
         }
     ]
 }

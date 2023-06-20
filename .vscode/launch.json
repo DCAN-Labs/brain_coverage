@@ -19,7 +19,7 @@
             "request": "launch",
             "program": "${workspaceFolder}/mahalanobis_outlier_identifier.py",
             "console": "integratedTerminal",
-            "args": ["-out", "/home/feczk001/mccol199/outlier_testing", "-infiles", "PATH/TO/INPUTS"],
+            "args": ["-out=/home/feczk001/mccol199/outlier_testing", "-infiles=/spaces/ngdr/ref-data/abcd/nda-3165-2020-09/derivatives/abcd-hcp-pipeline/sub-NDARINVZZ*/ses-*/func/*10min*.pconn.nii"],
             "justMyCode": true,
             "env": {"PYDEVD_WARN_SLOW_RESOLVE_TIMEOUT": "100", "PYDEVD_WARN_EVALUATION_TIMEOUT": "100"}, 
         },
@@ -29,10 +29,10 @@
             "request": "launch",
             "program": "${workspaceFolder}/brain_coverage.py",
             "console": "integratedTerminal",
-            "args": ["-study_dir=/home/feczk001/mccol199/bc_abcc_testing/", "-mni_template=/home/faird/shared/code/internal/pipelines/DCAN-HCP/global/templates/MNI152_T1_2mm_brain_mask_dil.nii.gz"],
+            "args": ["--study_dir=/home/feczk001/mccol199/bc_subject/", "--mni_template=/home/faird/shared/code/internal/pipelines/DCAN-HCP/global/templates/MNI152_T1_2mm_brain_mask_dil.nii.gz"],
             "justMyCode": true,
             "preLaunchTask": "Load fsl",
-            "env": {"PYDEVD_WARN_SLOW_RESOLVE_TIMEOUT": "100", "PYDEVD_WARN_EVALUATION_TIMEOUT": "100"}, 
+            "env": {"PYDEVD_WARN_SLOW_RESOLVE_TIMEOUT": "100", "PYDEVD_WARN_EVALUATION_TIMEOUT": "100"},
         }
     ]
 }

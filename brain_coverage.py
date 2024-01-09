@@ -4,9 +4,15 @@ import pandas as pd
 import glob
 import argparse
 import nibabel as nib
+import shutil
 from nipype.interfaces import fsl
 from nipype.interfaces.fsl.maths import MathsCommand
 from nibabel import imagestats
+
+# Originally created as Jupyter Notebook by Anders Perrone
+# Updated and converted to Python by rae McCollum
+# Function: Takes in bold images of subject, applies the MNI mask, and calculates how much the mask covers the orignial image
+
 
 # Create argparser for study input, path to MNI mask, and subject/session list
 def _cli():
@@ -15,12 +21,24 @@ def _cli():
     """
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        '--study_dir', required=True,  
-        help=('Path to BIDS derivatives directory')
+        '--study_dir', required=True, dest='data',
+        help='Path to BIDS valid subject directories, using wildcards (*) to designate a subset of the directory to analyze'
     )
     parser.add_argument(
         '--mni_template', required=True, 
         help='Path to MNI template file'
+    )
+    parser.add_argument(
+        '--tsv', required=True,
+        help='Path to the participants.tsv where the outputs of this script will be written to'
+    )
+    parser.add_argument(
+        '--failed_file', default= os.path.join(os.getcwd(),"failed_bc_runs"),
+        help='Path to a file to store the paths of the images that failed the calculation. Default path is the current directory with a filename of "failed_bc_runs".'
+    )
+    parser.add_argument(
+        '--work_dir', default= '/tmp/brain-coverage/',
+        help='Path to a directory to store the intermediate files that are created. These will be deleted as the script runs unless the --keep flag is specified. Default path of /tmp/brain-coverage/ is used'
     )
     parser.add_argument(
         '--keep', action='store_true',
@@ -31,48 +49,58 @@ def _cli():
 def get_inputs():
     '''Study input should be overarching project folder, which contains derivative and template subfolders'''
     cli_args = _cli()
-    study_input = cli_args["study_dir"]
+    study_input = glob.glob(cli_args['data'])
     MNI_mask = cli_args["mni_template"]
+    participant_tsv = cli_args["tsv"]
+    temp_work = cli_args["work_dir"]
     keep_files = cli_args["keep"]
-
+    failed_file = cli_args["failed_file"]
+    
     # Setting up paths needed for pipeline 
-    if study_input[-1] != '/':
-        study_input = str(study_input + '/')
+    for sub in study_input:
+        if sub[-1] != '/':
+            sub = str(sub + '/')
     study_dir = study_input # /spaces/ngdr/ref-data/abcd/nda-3165-2020-09/
 
-    # List of possible task names 
-    task_names = ["task-MID", "task-nback", "task-SST", "task-rest"]
-
     # Call calulation function
-    run_calculation(study_dir, MNI_mask, task_names, keep_files)
+    run_calculation(study_dir, MNI_mask, participant_tsv, temp_work, keep_files, failed_file)
 
-def run_calculation(BIDS, MNI_mask, task_names, keep): 
-    # Create empty dataframe that will be filled 
-    df_columns = ["participant_id", "session_id", "data_subset", "task", "run", "path", "rounded brain coverage %"]
-    df = pd.DataFrame(columns=df_columns)
-    subjects = glob.glob(os.path.join(BIDS, "sub-*"))
+def run_calculation(sub_list, MNI_mask, participant_tsv, temp_work, keep, failed_filepath): 
+    # Load the existing participants.tsv into a DataFrame
+    tsv = pd.read_csv(participant_tsv, sep='\t')
 
+    # Grab subject folders 
+    subjects = sub_list
     # Loop through subjects 
     for subject in subjects:
         # Loop through a subjects sessions 
-        for session in os.listdir(os.path.join(BIDS, subject)):
+        for session in os.listdir(subject):
             # Loop through all files with .nii.gz extension in the func folder
-            tasks = glob.glob(os.path.join(BIDS, subject, session, 'func', '*bold.nii.gz'))
+            tasks = glob.glob(os.path.join(subject, session, 'func', '*bold.nii.gz'))
+            values = {}
             for task in tasks:
                 # Setting up paths for images that will be created
-                parent_dir = os.path.dirname(task)
+                temp_dir = os.path.join(temp_work, subject.split('/')[-1])
+                if not os.path.exists(temp_dir):
+                    os.makedirs(temp_dir)
                 task_bn = os.path.basename(task).replace('.nii.gz','')
-                prefiltered_func = os.path.join(parent_dir, task_bn + '_prefiltered_func.nii.gz')
-                mean_func = os.path.join(parent_dir, task_bn + '_bold_mean_func.nii.gz')
-                mean_func_mask = os.path.join(parent_dir, task_bn + '_mean_func_mask.nii.gz')
-                mean_func_mask_masked = os.path.join(parent_dir, task_bn + '_mean_func_mask_masked.nii.gz')
+                prefiltered_func = os.path.join(temp_dir, task_bn + '_prefiltered_func.nii.gz')
+                mean_func = os.path.join(temp_dir, task_bn + '_bold_mean_func.nii.gz')
+                mean_func_mask = os.path.join(temp_dir, task_bn + '_mean_func_mask.nii.gz')
+                mean_func_mask_masked = os.path.join(temp_dir, task_bn + '_mean_func_mask_masked.nii.gz')
                 extra_files = [prefiltered_func, mean_func, mean_func_mask, mean_func_mask_masked]
-
+                
                 print("starting calculations for image: ", task)
                 # FSL calls to perform necessary calculations 
                 # Changes image to float type 
                 floating = MathsCommand(in_file= task, out_file= prefiltered_func, output_datatype= 'float', output_type= "NIFTI_GZ")
                 floating.run()
+                if not os.path.exists(prefiltered_func):
+                    failed_sub = prefiltered_func.split('/')[3]
+                    print(f"{prefiltered_func} is not an existing path. A RUN FROM THIS SUBJECT FAILED:", failed_sub)
+                    with open(failed_filepath, 'a') as file:
+                        file.write("This image failed:" + prefiltered_func)
+                    continue
                 # Takes mean of T dimension
                 mean = fsl.MeanImage(in_file= prefiltered_func, dimension= 'T', out_file= mean_func, output_type= "NIFTI_GZ")
                 mean.run()
@@ -95,23 +123,39 @@ def run_calculation(BIDS, MNI_mask, task_names, keep):
                 perc_vox_cov = (num_vox_val/mask_vox_val)*100
                 round_perc_vox = round(perc_vox_cov, 3)
 
-                # Add data from each run to dataframe and then output after all subjects
+                # Grab the task and run information to add as participants.tsv column 
                 sections = task_bn.split("_")
                 for s in sections:
                     if "task" in s:
                         t = s 
                     elif "run" in s:
                         r = s 
-                subset_data = str("derivatives.func.runs." + t + "_volume")
-                data = pd.DataFrame({'participant_id': [subject], "session_id": [session], "data_subset": [subset_data], "task": [t], "run": [r], "path": [task], 'rounded brain coverage %': [round_perc_vox]})
-                df = pd.concat([df,data], ignore_index=True)    
+                
+                # Name column BC_task_run-# 
+                task = t.split('-')[-1]
+                name = 'bc_' + task + '_' + r
+                values[name] = round_perc_vox
                 
                 # If keep flag not specified, remove intermediate files
                 if not keep:
-                    for file in extra_files:
-                        os.remove(file)
+                    shutil.rmtree(temp_dir)
 
-    df.to_csv(BIDS + 'brain_coverage.tsv', sep='\t', encoding='utf-8', header = None, index=False)
+            sub_id = subject.split('/')[-1]
+                
+            # Add columns if they don't exist
+            for column in values.keys():
+                if column not in tsv.columns:
+                    tsv[column] = None
+
+            # Locate the row for the subject and session and update the values
+            try: 
+                row_mask = (tsv['participant_id'] == sub_id) & (tsv['session_id'] == session)
+                tsv.loc[row_mask, values.keys()] = [values[column] for column in values.keys()]
+            except:
+                print("This subject/session was not found in the participants.tsv:", sub_id, session)
+
+
+    tsv.to_csv(participant_tsv, sep='\t', index=False)
 
 if __name__ == '__main__':
     get_inputs()

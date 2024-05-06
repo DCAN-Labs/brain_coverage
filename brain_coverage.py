@@ -69,10 +69,8 @@ def run_calculation(sub_list, MNI_mask, participant_tsv, temp_work, keep, failed
     # Load the existing participants.tsv into a DataFrame
     tsv = pd.read_csv(participant_tsv, sep='\t')
 
-    # Grab subject folders 
-    subjects = sub_list
     # Loop through subjects 
-    for subject in subjects:
+    for subject in sub_list:
         # Loop through a subjects sessions 
         for session in os.listdir(subject):
             # Loop through all files with .nii.gz extension in the func folder
@@ -159,3 +157,11 @@ def run_calculation(sub_list, MNI_mask, participant_tsv, temp_work, keep, failed
 
 if __name__ == '__main__':
     get_inputs()
+
+# This code currently can't be run on multiple subsets of data at once due to how tsv is written 
+# Changes get overwritten if running in parallel so need different way of writing
+# Write out new participants.tsv for each subset of subjects then combine later
+    # Three separate stages of running:
+    # Split participants.tsv so only has subset 
+    # Parallel processing of running calculations on subset
+    # Recombine participants.tsvs 

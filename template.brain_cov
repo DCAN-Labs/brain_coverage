@@ -1,0 +1,54 @@
+
+subject_id=SUBJECTID
+intermediate_bucket=BUCKET
+run_dir=RUNDIR
+data_dir=DATADIR
+session_id=SESSIONID
+final_bucket=s3://midb-abcd-main-pr
+bids_bucket=s3://midb-abcd-main-pr-bids-staging-temp
+temp_dir=/home/midb-ig/shared/projects/ABCD/Automated_QC/brain_coverage/tmp_tsv_files_20SEP
+
+
+module load fsl
+
+source /home/midb-ig/shared/projects/ABCD/Automated_QC/brain_coverage/autoQC/bin/activate
+
+# Create a temporary directory for TSV files
+mkdir -p "$temp_dir"
+
+# Create a temporary TSV file
+temp_tsv="$temp_dir/$(basename ${subject_id})_$(basename ${session_id}).tsv"
+
+
+# Print environment for debugging
+echo "FSLDIR: $FSLDIR"
+echo "PATH: $PATH"
+echo "Temporary TSV file: $temp_tsv"
+
+# # Test FSL commands
+# echo "Testing fslmaths command"
+# fslmaths -h
+
+# pull down s3 BIDS data
+if [ ! -d ${data_dir}/ABCC/sub-${subject_id} ]; then
+  mkdir -p ${data_dir}/ABCC/sub-${subject_id}
+  s3cmd sync -F --recursive -v ${final_bucket}/derivatives/abcd-hcp-pipeline_v0.1.4/sub-${subject_id}/ses-${session_id} ${data_dir}/sub-${subject_id} -c /spaces/ngdr/workspaces/hendr522/ABCC/code/s3cfgs/msi_loris_abcd_midb_s3.s3cfg
+fi
+
+# Extract the row for the specific subject and session from the TSV file
+python3 - <<EOF
+import pandas as pd
+
+# Load the participants TSV file
+participants_tsv = '/home/midb-ig/shared/projects/ABCD/Automated_QC/brain_coverage/participants.tsv'
+df = pd.read_csv(participants_tsv, sep='\t')
+
+# Filter for the specific subject and session
+filtered_df = df[(df['participant_id'] == 'sub-${subject_id}') & (df['session_id'] == 'ses-${session_id}')]
+
+# Save the filtered row to the temporary file
+filtered_df.to_csv('${temp_tsv}', sep='\t', index=False)
+EOF
+
+python3 /home/midb-ig/shared/projects/ABCD/Automated_QC/brain_coverage/brain_coverage.py --study_dir "${data_dir}/*" --mni_template /home/rando149/shared/projects/rae_testing/coverage_qc/MNI_2mm_T1_mask/tpl-MNI152NLin6Asym_res-02_desc-brain_mask.nii.gz --tsv ${temp_tsv} --work_dir ${data_dir}/brain_cov/
+
